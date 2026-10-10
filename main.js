@@ -383,7 +383,7 @@ function init() {
   document.getElementById("clearTasksBtn").onclick = async () => {
     if (!currentDate) return;
     const dateLabel = formatDateLabel(currentDate);
-    if (!await showConfirmation(`${dateLabel}のすべてのタスクを削除しますか？`)) return;
+    if (!await showConfirmation(`${dateLabel}の\nすべてのタスクを削除しますか？`)) return;
     if (data.days[currentDate].some(task => task.id === runningTaskId)) closeOverlay();
     data.days[currentDate] = [];
     saveData();
