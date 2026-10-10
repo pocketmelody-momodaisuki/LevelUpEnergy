@@ -1,0 +1,74 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>受験勉強タスクタイマー</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-left">
+        <label for="datePicker">日付選択</label>
+        <input type="date" id="datePicker">
+        <button id="addDateBtn">この日付のリストを作成</button>
+      </div>
+      <div class="header-right">
+        <span class="today-label">今日: <span id="todayText"></span></span>
+      </div>
+    </header>
+    <main class="main">
+      <section class="date-list-section">
+        <h2>日付一覧</h2>
+        <ul id="dateList" class="date-list"></ul>
+      </section>
+      <section class="task-list-section">
+        <h2 id="taskListTitle">タスク一覧</h2>
+        <div class="task-list-header">
+          <button id="clearTasksBtn" class="secondary">クリア</button>
+          <button id="addTaskBtn">タスク追加</button>
+        </div>
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th class="col-check">完了</th>
+              <th class="col-name">タスク名</th>
+              <th class="col-planned">所要時間</th>
+              <th class="col-actual">実績時間</th>
+              <th class="col-action">操作</th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody"></tbody>
+        </table>
+      </section>
+    </main>
+    <datalist id="taskMasterList"></datalist>
+    <div id="overlay" class="overlay hidden">
+      <div class="overlay-content">
+        <div class="overlay-header">
+          <div class="overlay-task-name" id="overlayTaskName"></div>
+          <div class="overlay-date" id="overlayDate"></div>
+        </div>
+        <div class="overlay-timer" id="overlayTimer">00:00</div>
+        <div class="overlay-buttons">
+          <button id="overlayStartBtn">開始</button>
+          <button id="overlayPauseBtn">一時停止</button>
+          <button id="overlayFinishBtn">完了</button>
+          <button id="overlayCloseBtn">閉じる</button>
+        </div>
+      </div>
+    </div>
+    <div id="confirmOverlay" class="overlay confirm-overlay hidden">
+      <div class="confirm-content" role="alertdialog" aria-modal="true" aria-labelledby="confirmMessage">
+        <div id="confirmMessage" class="confirm-message"></div>
+        <div class="confirm-buttons">
+          <button id="confirmCancelBtn" class="secondary">いいえ</button>
+          <button id="confirmAcceptBtn" class="confirm-accept-btn">はい</button>
+        </div>
+      </div>
+    </div>
+    <script src="main.js"></script>
+  </div>
+</body>
+</html>
