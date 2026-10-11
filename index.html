@@ -24,10 +24,26 @@
         <ul id="dateList" class="date-list"></ul>
       </section>
       <section class="task-list-section">
-        <h2 id="taskListTitle">タスク一覧</h2>
-        <div class="task-list-header">
-          <button id="clearTasksBtn" class="secondary">クリア</button>
-          <button id="addTaskBtn">タスク追加</button>
+        <div class="task-list-topbar">
+          <h2 id="taskListTitle">タスク一覧</h2>
+          <div class="completion-summary">
+            <span id="completionRate">達成率：0%</span>
+            <div
+              id="completionProgress"
+              class="completion-progress"
+              role="progressbar"
+              aria-label="達成率"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <div id="completionProgressFill" class="completion-progress-fill"></div>
+            </div>
+          </div>
+          <div class="task-list-header">
+            <button id="clearTasksBtn" class="secondary">クリア</button>
+            <button id="addTaskBtn">タスク追加</button>
+          </div>
         </div>
         <table class="task-table">
           <thead>

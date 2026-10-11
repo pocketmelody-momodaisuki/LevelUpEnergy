@@ -78,8 +78,15 @@ function renderDateList() {
       li.classList.add("active");
     }
     const spanLabel = document.createElement("span");
+    spanLabel.className = "date-label";
     spanLabel.textContent = formatDateLabel(dateStr);
     li.appendChild(spanLabel);
+    if (data.days[dateStr].some(task => !task.completed)) {
+      const pendingLabel = document.createElement("span");
+      pendingLabel.className = "pending-label";
+      pendingLabel.textContent = "残あり";
+      li.appendChild(pendingLabel);
+    }
     li.onclick = () => {
       currentDate = dateStr;
       renderDateList();
@@ -103,6 +110,26 @@ function renderTaskMasterList() {
 function getTaskDurationSeconds(task, property) {
   const minutes = task[property];
   return Number.isFinite(minutes) ? Math.max(0, Math.round(minutes * 60)) : null;
+}
+
+function updateCompletionRate(tasks) {
+  const totalPlannedSeconds = tasks.reduce((total, task) => {
+    const plannedSeconds = getTaskDurationSeconds(task, "plannedMinutes");
+    return total + (plannedSeconds == null ? 30 * 60 : plannedSeconds);
+  }, 0);
+  const completedPlannedSeconds = tasks.reduce((total, task) => {
+    if (!task.completed) return total;
+    const plannedSeconds = getTaskDurationSeconds(task, "plannedMinutes");
+    return total + (plannedSeconds == null ? 30 * 60 : plannedSeconds);
+  }, 0);
+  const completionRate = totalPlannedSeconds === 0
+    ? 0
+    : Math.round((completedPlannedSeconds / totalPlannedSeconds) * 100);
+
+  document.getElementById("completionRate").textContent = `達成率：${completionRate}%`;
+  const progress = document.getElementById("completionProgress");
+  progress.setAttribute("aria-valuenow", String(completionRate));
+  document.getElementById("completionProgressFill").style.width = `${completionRate}%`;
 }
 
 function createDurationControls(totalSeconds, onChange, allowEmpty = false) {
@@ -180,6 +207,8 @@ function createTaskRow(task, index) {
   cb.onchange = () => {
     task.completed = cb.checked;
     saveData();
+    renderDateList();
+    updateCompletionRate(data.days[currentDate]);
   };
   tdCheck.appendChild(cb);
   tr.appendChild(tdCheck);
@@ -206,6 +235,7 @@ function createTaskRow(task, index) {
     totalSeconds => {
       task.plannedMinutes = totalSeconds / 60;
       saveData();
+      updateCompletionRate(data.days[currentDate]);
     }
   ));
   tr.appendChild(tdPlanned);
@@ -233,11 +263,13 @@ function createTaskRow(task, index) {
   deleteBtn.textContent = "削除";
   deleteBtn.setAttribute("aria-label", `${task.name || "選択されたタスク"}を削除`);
   deleteBtn.onclick = async () => {
+    const taskDate = currentDate;
     const taskName = task.name || "(タスク名未入力)";
     if (!await showConfirmation(`選択されたタスク\n\n${taskName}\n\nを削除しますか？`)) return;
     if (runningTaskId === task.id) closeOverlay();
-    data.days[currentDate].splice(index, 1);
+    data.days[taskDate].splice(index, 1);
     saveData();
+    renderDateList();
     renderTaskList();
   };
   tdAction.appendChild(deleteBtn);
@@ -252,6 +284,7 @@ function renderTaskList() {
   } else {
     titleEl.textContent = "タスク一覧";
   }
+  updateCompletionRate(currentDate ? data.days[currentDate] || [] : []);
   const tbody = document.getElementById("taskTableBody");
   tbody.innerHTML = "";
   if (!currentDate) return;
@@ -275,6 +308,7 @@ function addTaskToCurrentDate() {
   };
   data.days[currentDate].push(newTask);
   saveData();
+  renderDateList();
   renderTaskList();
 }
 
@@ -382,11 +416,13 @@ function init() {
   };
   document.getElementById("clearTasksBtn").onclick = async () => {
     if (!currentDate) return;
-    const dateLabel = formatDateLabel(currentDate);
+    const taskDate = currentDate;
+    const dateLabel = formatDateLabel(taskDate);
     if (!await showConfirmation(`${dateLabel}の\nすべてのタスクを削除しますか？`)) return;
-    if (data.days[currentDate].some(task => task.id === runningTaskId)) closeOverlay();
-    data.days[currentDate] = [];
+    if (data.days[taskDate].some(task => task.id === runningTaskId)) closeOverlay();
+    data.days[taskDate] = [];
     saveData();
+    renderDateList();
     renderTaskList();
   };
   document.getElementById("confirmAcceptBtn").onclick = () => {
