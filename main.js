@@ -112,15 +112,37 @@ function getTaskDurationSeconds(task, property) {
   return Number.isFinite(minutes) ? Math.max(0, Math.round(minutes * 60)) : null;
 }
 
+function getPlannedDurationSeconds(task) {
+  const plannedSeconds = getTaskDurationSeconds(task, "plannedMinutes");
+  return plannedSeconds == null ? 30 * 60 : plannedSeconds;
+}
+
+function formatDuration(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  let formatted = "";
+  if (hours > 0) formatted += `${hours}時間`;
+  if (minutes > 0) formatted += `${minutes}分`;
+  if (seconds > 0) formatted += `${seconds}秒`;
+  return formatted || "0分";
+}
+
+function updatePlannedDurationTotal(tasks) {
+  const totalSeconds = tasks.reduce((total, task) => {
+    return total + getPlannedDurationSeconds(task);
+  }, 0);
+  document.getElementById("plannedDurationTotal").textContent =
+    `所要時間計：${formatDuration(totalSeconds)}`;
+}
+
 function updateCompletionRate(tasks) {
   const totalPlannedSeconds = tasks.reduce((total, task) => {
-    const plannedSeconds = getTaskDurationSeconds(task, "plannedMinutes");
-    return total + (plannedSeconds == null ? 30 * 60 : plannedSeconds);
+    return total + getPlannedDurationSeconds(task);
   }, 0);
   const completedPlannedSeconds = tasks.reduce((total, task) => {
     if (!task.completed) return total;
-    const plannedSeconds = getTaskDurationSeconds(task, "plannedMinutes");
-    return total + (plannedSeconds == null ? 30 * 60 : plannedSeconds);
+    return total + getPlannedDurationSeconds(task);
   }, 0);
   const completionRate = totalPlannedSeconds === 0
     ? 0
@@ -236,6 +258,7 @@ function createTaskRow(task, index) {
       task.plannedMinutes = totalSeconds / 60;
       saveData();
       updateCompletionRate(data.days[currentDate]);
+      updatePlannedDurationTotal(data.days[currentDate]);
     }
   ));
   tr.appendChild(tdPlanned);
@@ -284,7 +307,9 @@ function renderTaskList() {
   } else {
     titleEl.textContent = "タスク一覧";
   }
-  updateCompletionRate(currentDate ? data.days[currentDate] || [] : []);
+  const currentTasks = currentDate ? data.days[currentDate] || [] : [];
+  updateCompletionRate(currentTasks);
+  updatePlannedDurationTotal(currentTasks);
   const tbody = document.getElementById("taskTableBody");
   tbody.innerHTML = "";
   if (!currentDate) return;
