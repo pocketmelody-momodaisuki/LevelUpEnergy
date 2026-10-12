@@ -32,6 +32,8 @@ let wakeLockRequestPending = false;
 let confirmActionResolver = null;
 let initialDataLoaded = false;
 let pendingSave = Promise.resolve();
+let taskReorderGesture = null;
+const taskByRow = new WeakMap();
 
 function formatDateLabel(dateStr) {
   const d = new Date(dateStr);
@@ -141,6 +143,101 @@ function renderOperationLogs() {
     item.append(timestamp, message);
     list.appendChild(item);
   });
+}
+
+function isTaskRowControl(target) {
+  return target.closest("button, input, select, textarea, a, label");
+}
+
+function beginTaskReorder(row, clientX, clientY, source, event) {
+  if (taskReorderGesture || isTaskRowControl(event.target)) return;
+  const task = taskByRow.get(row);
+  if (!task || !currentDate) return;
+
+  const gesture = {
+    row,
+    task,
+    source,
+    startX: clientX,
+    startY: clientY,
+    dragging: false,
+    timerId: null
+  };
+  taskReorderGesture = gesture;
+  gesture.timerId = setTimeout(() => {
+    if (taskReorderGesture !== gesture) return;
+    gesture.dragging = true;
+    row.classList.add("task-row-dragging");
+    row.setAttribute("aria-grabbed", "true");
+  }, 500);
+}
+
+function moveTaskReorder(clientX, clientY, event) {
+  const gesture = taskReorderGesture;
+  if (!gesture) return;
+
+  if (!gesture.dragging) {
+    const distance = Math.hypot(clientX - gesture.startX, clientY - gesture.startY);
+    if (distance > 10) cancelTaskReorder();
+    return;
+  }
+
+  if (event.cancelable) event.preventDefault();
+  const target = document.elementFromPoint(clientX, clientY)?.closest("tr.task-row");
+  if (!target || target === gesture.row || target.parentElement !== gesture.row.parentElement) return;
+
+  const targetBounds = target.getBoundingClientRect();
+  if (clientY < targetBounds.top + targetBounds.height / 2) {
+    target.parentElement.insertBefore(gesture.row, target);
+  } else {
+    target.parentElement.insertBefore(gesture.row, target.nextElementSibling);
+  }
+}
+
+function cancelTaskReorder() {
+  const gesture = taskReorderGesture;
+  if (!gesture) return;
+  clearTimeout(gesture.timerId);
+  gesture.row.classList.remove("task-row-dragging");
+  gesture.row.removeAttribute("aria-grabbed");
+  taskReorderGesture = null;
+  if (gesture.dragging) renderTaskList();
+}
+
+function finishTaskReorder() {
+  const gesture = taskReorderGesture;
+  if (!gesture) return;
+  clearTimeout(gesture.timerId);
+  gesture.row.classList.remove("task-row-dragging");
+  gesture.row.removeAttribute("aria-grabbed");
+  taskReorderGesture = null;
+  if (!gesture.dragging) return;
+
+  const tasks = Array.from(gesture.row.parentElement.querySelectorAll("tr.task-row"))
+    .map(row => taskByRow.get(row))
+    .filter(task => task);
+  const previousIndex = data.days[currentDate].indexOf(gesture.task);
+  const nextIndex = tasks.indexOf(gesture.task);
+  if (previousIndex === nextIndex) return;
+
+  data.days[currentDate] = tasks;
+  addOperationLog(
+    `${formatLogDate(currentDate)}の${getTaskLabel(gesture.task)}を${previousIndex + 1}番目から${nextIndex + 1}番目へ並べ替えました。`
+  );
+  saveData();
+  renderTaskList();
+}
+
+function handleMouseMove(event) {
+  if (taskReorderGesture?.source === "mouse") {
+    moveTaskReorder(event.clientX, event.clientY, event);
+  }
+}
+
+function handleTouchMove(event) {
+  if (taskReorderGesture?.source !== "touch" || event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  moveTaskReorder(touch.clientX, touch.clientY, event);
 }
 
 function setEditingEnabled(enabled) {
@@ -408,6 +505,17 @@ function createDurationControls(totalSeconds, onChange, allowEmpty = false) {
 
 function createTaskRow(task, index) {
   const tr = document.createElement("tr");
+  tr.className = "task-row";
+  taskByRow.set(tr, task);
+  tr.addEventListener("mousedown", event => {
+    if (event.button !== 0) return;
+    beginTaskReorder(tr, event.clientX, event.clientY, "mouse", event);
+  });
+  tr.addEventListener("touchstart", event => {
+    if (event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    beginTaskReorder(tr, touch.clientX, touch.clientY, "touch", event);
+  }, { passive: true });
   const tdCheck = document.createElement("td");
   tdCheck.className = "checkbox-cell";
   const cb = document.createElement("input");
@@ -852,6 +960,11 @@ function init() {
       document.getElementById("operationLogOverlay").classList.add("hidden");
     }
   };
+  document.addEventListener("mousemove", handleMouseMove);
+  document.addEventListener("mouseup", finishTaskReorder);
+  document.addEventListener("touchmove", handleTouchMove, { passive: false });
+  document.addEventListener("touchend", finishTaskReorder);
+  document.addEventListener("touchcancel", cancelTaskReorder);
   document.addEventListener("visibilitychange", handleVisibilityChange);
 
   onValue(

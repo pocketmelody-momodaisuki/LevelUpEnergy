@@ -243,6 +243,22 @@ button.secondary {
   text-align: left;
 }
 
+.task-row {
+  cursor: grab;
+}
+
+.task-row-dragging {
+  opacity: 0.75;
+  outline: 2px dashed #007aff;
+  outline-offset: -2px;
+  background-color: #e8f3ff;
+  cursor: grabbing;
+}
+
+.task-row-dragging td {
+  background-color: #e8f3ff;
+}
+
 .col-check {
   width: 40px;
   text-align: center;
