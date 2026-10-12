@@ -485,7 +485,9 @@ function createTaskRow(task, index) {
   const tdAction = document.createElement("td");
   tdAction.className = "action-buttons";
   const startBtn = document.createElement("button");
-  startBtn.textContent = "進める";
+  startBtn.textContent = "▶";
+  startBtn.setAttribute("aria-label", `${task.name || "選択されたタスク"}を進める`);
+  startBtn.title = "進める";
   startBtn.onclick = () => {
     openOverlayForTask(task);
   };
@@ -493,8 +495,9 @@ function createTaskRow(task, index) {
   const moveBtn = document.createElement("button");
   moveBtn.type = "button";
   moveBtn.className = "move-task-btn";
-  moveBtn.textContent = "移動";
+  moveBtn.textContent = "⇔";
   moveBtn.setAttribute("aria-label", `${task.name || "選択されたタスク"}を別の日付へ移動`);
+  moveBtn.title = "移動";
   moveBtn.onclick = () => {
     openMoveDialog(task);
   };
@@ -503,8 +506,9 @@ function createTaskRow(task, index) {
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "delete-task-btn";
-  deleteBtn.textContent = "削除";
+  deleteBtn.textContent = "✖";
   deleteBtn.setAttribute("aria-label", `${task.name || "選択されたタスク"}を削除`);
+  deleteBtn.title = "削除";
   deleteBtn.onclick = async () => {
     const taskDate = currentDate;
     const taskName = task.name || "(タスク名未入力)";
