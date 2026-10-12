@@ -43,8 +43,11 @@
             </div>
           </div>
           <div class="task-list-header">
-            <button id="clearTasksBtn" class="secondary">クリア</button>
-            <button id="addTaskBtn">タスク追加</button>
+            <div class="task-list-actions">
+              <button id="clearTasksBtn" class="secondary">クリア</button>
+              <button id="addTaskBtn">タスク追加</button>
+            </div>
+            <button id="operationLogBtn" class="secondary operation-log-btn">操作ログ</button>
           </div>
         </div>
         <div class="planned-duration-summary">
@@ -94,6 +97,15 @@
           <button id="moveCancelBtn" class="secondary">キャンセル</button>
           <button id="moveAcceptBtn">この日付へタスクを移動</button>
         </div>
+      </div>
+    </div>
+    <div id="operationLogOverlay" class="overlay operation-log-overlay hidden">
+      <div class="operation-log-content" role="dialog" aria-modal="true" aria-labelledby="operationLogTitle">
+        <div class="operation-log-header">
+          <h2 id="operationLogTitle">操作ログ</h2>
+          <button id="operationLogCloseBtn" class="secondary">閉じる</button>
+        </div>
+        <ul id="operationLogList" class="operation-log-list"></ul>
       </div>
     </div>
     <div id="confirmOverlay" class="overlay confirm-overlay hidden">

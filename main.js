@@ -17,10 +17,11 @@ const firebaseConfig = {
 };
 
 const LEGACY_STORAGE_KEY = "studyTaskData";
+const MAX_OPERATION_LOGS = 500;
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 const sharedDataRef = ref(database, "studyTaskData");
-let data = { tasks: [], days: {} };
+let data = { tasks: [], days: {}, logs: [] };
 let currentDate = null;
 let runningTimerId = null;
 let runningSessionSeconds = 0;
@@ -47,13 +48,16 @@ function normalizeData(value) {
     : [];
   const sourceDays = source.days && typeof source.days === "object" ? source.days : {};
   const days = {};
+  const logs = Array.isArray(source.logs)
+    ? source.logs.filter(entry => entry && typeof entry.timestamp === "string" && typeof entry.message === "string")
+    : [];
 
   Object.entries(sourceDays).forEach(([date, dayTasks]) => {
     if (Array.isArray(dayTasks)) {
       days[date] = dayTasks.filter(task => task && typeof task === "object");
     }
   });
-  return { tasks, days };
+  return { tasks, days, logs };
 }
 
 function readLegacyData() {
@@ -84,8 +88,61 @@ function setSyncStatus(message, isError = false) {
   status.classList.toggle("sync-error", isError);
 }
 
+function getLogTimestamp() {
+  const now = new Date();
+  const date = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0")
+  ].join("/");
+  const time = [
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0")
+  ].join(":");
+  return `${date} ${time}`;
+}
+
+function formatLogDate(dateStr) {
+  return dateStr.replaceAll("-", "/");
+}
+
+function getTaskLabel(task) {
+  return task.name && task.name.trim() ? `「${task.name.trim()}」` : "未入力のタスク";
+}
+
+function addOperationLog(message) {
+  data.logs.push({ timestamp: getLogTimestamp(), message });
+  if (data.logs.length > MAX_OPERATION_LOGS) {
+    data.logs.splice(0, data.logs.length - MAX_OPERATION_LOGS);
+  }
+}
+
+function renderOperationLogs() {
+  const list = document.getElementById("operationLogList");
+  list.innerHTML = "";
+  if (data.logs.length === 0) {
+    const emptyMessage = document.createElement("li");
+    emptyMessage.className = "operation-log-empty";
+    emptyMessage.textContent = "操作ログはまだありません。";
+    list.appendChild(emptyMessage);
+    return;
+  }
+
+  [...data.logs].reverse().forEach(entry => {
+    const item = document.createElement("li");
+    item.className = "operation-log-item";
+    const timestamp = document.createElement("time");
+    timestamp.className = "operation-log-timestamp";
+    timestamp.textContent = entry.timestamp;
+    const message = document.createElement("span");
+    message.textContent = entry.message;
+    item.append(timestamp, message);
+    list.appendChild(item);
+  });
+}
+
 function setEditingEnabled(enabled) {
-  ["datePicker", "addDateBtn", "clearTasksBtn", "addTaskBtn"].forEach(id => {
+  ["datePicker", "addDateBtn", "clearTasksBtn", "addTaskBtn", "operationLogBtn"].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
 }
@@ -110,6 +167,9 @@ function renderData() {
   renderDateList();
   renderTaskMasterList();
   renderTaskList();
+  if (!document.getElementById("operationLogOverlay").classList.contains("hidden")) {
+    renderOperationLogs();
+  }
 }
 
 function handleSharedData(snapshot) {
@@ -127,7 +187,9 @@ function handleSharedData(snapshot) {
     }
   }
 
-  data = snapshot.exists() ? normalizeData(snapshot.val()) : { tasks: [], days: {} };
+  data = snapshot.exists()
+    ? normalizeData(snapshot.val())
+    : { tasks: [], days: {}, logs: [] };
   if (legacyData) data = mergeLegacyData(data, legacyData);
 
   if (isFirstLoad) {
@@ -351,6 +413,9 @@ function createTaskRow(task, index) {
   cb.checked = !!task.completed;
   cb.onchange = () => {
     task.completed = cb.checked;
+    addOperationLog(
+      `${formatLogDate(currentDate)}の${getTaskLabel(task)}を${task.completed ? "完了しました" : "未完了に戻しました"}。`
+    );
     saveData();
     renderDateList();
     updateCompletionRate(data.days[currentDate]);
@@ -365,7 +430,13 @@ function createTaskRow(task, index) {
   nameInput.setAttribute("list", "taskMasterList");
   nameInput.value = task.name || "";
   nameInput.onchange = () => {
+    const previousName = task.name || "";
     task.name = nameInput.value.trim();
+    if (previousName !== task.name) {
+      addOperationLog(
+        `${formatLogDate(currentDate)}のタスク名を「${previousName || "未入力"}」から「${task.name || "未入力"}」に変更しました。`
+      );
+    }
     if (task.name) {
       data.tasks.push(task.name);
       renderTaskMasterList();
@@ -379,7 +450,13 @@ function createTaskRow(task, index) {
   tdPlanned.appendChild(createDurationControls(
     plannedSeconds == null ? 30 * 60 : plannedSeconds,
     totalSeconds => {
+      const previousSeconds = getPlannedDurationSeconds(task);
       task.plannedMinutes = totalSeconds / 60;
+      if (previousSeconds !== totalSeconds) {
+        addOperationLog(
+          `${formatLogDate(currentDate)}の${getTaskLabel(task)}の所要時間を${formatDuration(previousSeconds)}から${formatDuration(totalSeconds)}に変更しました。`
+        );
+      }
       saveData();
       updateCompletionRate(data.days[currentDate]);
       updatePlannedDurationTotal(data.days[currentDate]);
@@ -391,7 +468,13 @@ function createTaskRow(task, index) {
   tdActual.appendChild(createDurationControls(
     getTaskDurationSeconds(task, "actualMinutes"),
     totalSeconds => {
+      const previousSeconds = getTaskDurationSeconds(task, "actualMinutes");
       task.actualMinutes = totalSeconds / 60;
+      if (previousSeconds !== totalSeconds) {
+        addOperationLog(
+          `${formatLogDate(currentDate)}の${getTaskLabel(task)}の実績時間を${previousSeconds == null ? "未記録" : formatDuration(previousSeconds)}から${formatDuration(totalSeconds)}に変更しました。`
+        );
+      }
       saveData();
       updatePlannedDurationTotal(data.days[currentDate]);
       updateOverlayPlannedRemaining();
@@ -428,6 +511,7 @@ function createTaskRow(task, index) {
     if (!await showConfirmation(`選択されたタスク\n\n${taskName}\n\nを削除しますか？`)) return;
     if (runningTaskId === task.id) closeOverlay();
     data.days[taskDate].splice(index, 1);
+    addOperationLog(`${formatLogDate(taskDate)}の${getTaskLabel(task)}が削除されました。`);
     saveData();
     renderDateList();
     renderTaskList();
@@ -469,6 +553,7 @@ function addTaskToCurrentDate() {
     completed: false
   };
   data.days[currentDate].push(newTask);
+  addOperationLog(`${formatLogDate(currentDate)}にタスクを追加しました。`);
   saveData();
   renderDateList();
   renderTaskList();
@@ -561,6 +646,9 @@ function openMoveDialog(task) {
     sourceTasks.splice(taskIndex, 1);
     ensureDay(destinationDate);
     data.days[destinationDate].push(task);
+    addOperationLog(
+      `${formatLogDate(sourceDate)}の${getTaskLabel(task)}を${formatLogDate(destinationDate)}へ移動しました。`
+    );
     currentDate = destinationDate;
     document.getElementById("datePicker").value = destinationDate;
     moveOverlay.classList.add("hidden");
@@ -575,6 +663,11 @@ function openMoveDialog(task) {
 
 function startTimer() {
   if (runningTimerId) return;
+  const task = currentDate && (data.days[currentDate] || []).find(item => item.id === runningTaskId);
+  if (task) {
+    addOperationLog(`${formatLogDate(currentDate)}の${getTaskLabel(task)}のタイマーを開始しました。`);
+    saveData();
+  }
   const startBtn = document.getElementById("overlayStartBtn");
   const pauseBtn = document.getElementById("overlayPauseBtn");
   startBtn.disabled = true;
@@ -607,6 +700,13 @@ function applySessionToTask(markCompleted) {
   task.actualMinutes = (runningBaseSeconds + runningSessionSeconds) / 60;
   if (markCompleted) {
     task.completed = true;
+    addOperationLog(
+      `${formatLogDate(currentDate)}の${getTaskLabel(task)}が完了しました（実績時間：${formatDuration(Math.round(task.actualMinutes * 60))}）。`
+    );
+  } else {
+    addOperationLog(
+      `${formatLogDate(currentDate)}の${getTaskLabel(task)}の実績時間を${formatDuration(Math.round(task.actualMinutes * 60))}に更新しました。`
+    );
   }
   saveData();
   renderTaskList();
@@ -622,8 +722,12 @@ function init() {
   document.getElementById("addDateBtn").onclick = () => {
     const selected = datePicker.value;
     if (!selected) return;
+    const isNewDate = !data.days[selected];
     ensureDay(selected);
     currentDate = selected;
+    if (isNewDate) {
+      addOperationLog(`${formatLogDate(selected)}のタスクリストを作成しました。`);
+    }
     saveData();
     renderDateList();
     renderTaskList();
@@ -637,7 +741,12 @@ function init() {
     const dateLabel = formatDateLabel(taskDate);
     if (!await showConfirmation(`${dateLabel}の\nすべてのタスクを削除しますか？`)) return;
     if (data.days[taskDate].some(task => task.id === runningTaskId)) closeOverlay();
+    const deletedTasks = data.days[taskDate];
+    const deletedNames = deletedTasks.map(getTaskLabel).join("、");
     data.days[taskDate] = [];
+    addOperationLog(
+      `${formatLogDate(taskDate)}のタスク${deletedTasks.length}件${deletedNames ? `（${deletedNames}）` : ""}を一括削除しました。`
+    );
     saveData();
     renderDateList();
     renderTaskList();
@@ -670,6 +779,18 @@ function init() {
   };
   document.getElementById("overlayCloseBtn").onclick = () => {
     closeOverlay();
+  };
+  document.getElementById("operationLogBtn").onclick = () => {
+    renderOperationLogs();
+    document.getElementById("operationLogOverlay").classList.remove("hidden");
+  };
+  document.getElementById("operationLogCloseBtn").onclick = () => {
+    document.getElementById("operationLogOverlay").classList.add("hidden");
+  };
+  document.getElementById("operationLogOverlay").onkeydown = event => {
+    if (event.key === "Escape") {
+      document.getElementById("operationLogOverlay").classList.add("hidden");
+    }
   };
 
   onValue(

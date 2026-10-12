@@ -55,7 +55,7 @@ body {
 }
 
 .date-list-section {
-  flex: 0 0 220px;
+  flex: 0 0 200px;
   box-sizing: border-box;
   background-color: #ffffff;
   border-radius: 8px;
@@ -190,8 +190,19 @@ h2 {
 .task-list-header {
   display: flex;
   flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.task-list-actions {
+  display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.operation-log-btn {
+  align-self: flex-end;
 }
 
 button {
@@ -256,6 +267,14 @@ button.secondary {
   background-color: #dc3545;
 }
 
+.move-task-btn {
+  background-color: #28a745;
+}
+
+.move-task-btn:hover {
+  background-color: #218838;
+}
+
 .action-buttons {
   display: flex;
   align-items: center;
@@ -281,7 +300,7 @@ button.secondary {
 }
 
 .duration-select {
-  width: 44px;
+  width: 40px;
   padding: 4px 2px;
   border-radius: 4px;
   border: 1px solid #cccccc;
@@ -316,6 +335,10 @@ button.secondary {
 
 .confirm-overlay {
   z-index: 200;
+}
+
+.operation-log-overlay {
+  z-index: 150;
 }
 
 .confirm-content {
@@ -435,6 +458,56 @@ button.secondary {
   margin-top: 16px;
 }
 
+.operation-log-content {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100% - 32px));
+  max-height: min(80vh, 720px);
+  padding: 24px;
+  border-radius: 12px;
+  background-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.operation-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.operation-log-header h2 {
+  margin: 0;
+}
+
+.operation-log-list {
+  overflow-y: auto;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.operation-log-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 4px;
+  border-bottom: 1px solid #e0e0e5;
+  overflow-wrap: anywhere;
+}
+
+.operation-log-timestamp {
+  color: #555555;
+  font-size: 13px;
+}
+
+.operation-log-empty {
+  padding: 16px 4px;
+  color: #555555;
+}
+
 @media (max-width: 640px) {
   .overlay-content {
     padding: 24px;
@@ -464,6 +537,10 @@ button.secondary {
 
   .move-content {
     padding: 24px;
+  }
+
+  .operation-log-content {
+    padding: 18px;
   }
 }
 
