@@ -27,6 +27,8 @@ let runningTimerId = null;
 let runningSessionSeconds = 0;
 let runningBaseSeconds = 0;
 let runningTaskId = null;
+let screenWakeLock = null;
+let wakeLockRequestPending = false;
 let confirmActionResolver = null;
 let initialDataLoaded = false;
 let pendingSave = Promise.resolve();
@@ -674,12 +676,65 @@ function startTimer() {
   }
   const startBtn = document.getElementById("overlayStartBtn");
   const pauseBtn = document.getElementById("overlayPauseBtn");
+  document.getElementById("wakeLockStatus").textContent = "";
   startBtn.disabled = true;
   pauseBtn.disabled = false;
   runningTimerId = setInterval(() => {
     runningSessionSeconds += 1;
     updateOverlayTimerDisplay();
   }, 1000);
+  void requestScreenWakeLock();
+}
+
+async function requestScreenWakeLock() {
+  if (!runningTimerId) return;
+  if (!("wakeLock" in navigator)) {
+    document.getElementById("wakeLockStatus").textContent =
+      "このブラウザーは画面スリープ防止に対応していません。iPadの自動ロック設定をご確認ください。";
+    return;
+  }
+  if (document.visibilityState !== "visible") return;
+  if (screenWakeLock && !screenWakeLock.released) return;
+  if (wakeLockRequestPending) return;
+
+  wakeLockRequestPending = true;
+  try {
+    const wakeLock = await navigator.wakeLock.request("screen");
+    if (!runningTimerId || document.visibilityState !== "visible") {
+      await wakeLock.release();
+      return;
+    }
+    screenWakeLock = wakeLock;
+    document.getElementById("wakeLockStatus").textContent = "";
+    wakeLock.addEventListener("release", () => {
+      if (screenWakeLock === wakeLock) screenWakeLock = null;
+      if (runningTimerId && document.visibilityState === "visible") {
+        void requestScreenWakeLock();
+      }
+    });
+  } catch (error) {
+    console.warn("画面スリープ防止を有効にできませんでした。", error);
+    document.getElementById("wakeLockStatus").textContent =
+      "画面スリープ防止を利用できません。iPadの自動ロック設定をご確認ください。";
+  } finally {
+    wakeLockRequestPending = false;
+  }
+}
+
+function releaseScreenWakeLock() {
+  const wakeLock = screenWakeLock;
+  screenWakeLock = null;
+  if (wakeLock) {
+    wakeLock.release().catch(error => {
+      console.warn("画面スリープ防止を解除できませんでした。", error);
+    });
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === "visible" && runningTimerId) {
+    void requestScreenWakeLock();
+  }
 }
 
 function stopTimer() {
@@ -687,6 +742,7 @@ function stopTimer() {
     clearInterval(runningTimerId);
     runningTimerId = null;
   }
+  releaseScreenWakeLock();
   const startBtn = document.getElementById("overlayStartBtn");
   const pauseBtn = document.getElementById("overlayPauseBtn");
   if (startBtn && pauseBtn) {
@@ -796,6 +852,7 @@ function init() {
       document.getElementById("operationLogOverlay").classList.add("hidden");
     }
   };
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   onValue(
     sharedDataRef,
