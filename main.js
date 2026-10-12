@@ -1,5 +1,25 @@
-// main.js
-const STORAGE_KEY = "studyTaskData";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+import {
+  getDatabase,
+  onValue,
+  ref,
+  set
+} from "https://www.gstatic.com/firebasejs/13.0.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBtvfBrWkq5zIzDwbmFU_b7Rt0a1u7k-z8",
+  authDomain: "study-task-app-aac17.firebaseapp.com",
+  databaseURL: "https://study-task-app-aac17-default-rtdb.firebaseio.com",
+  projectId: "study-task-app-aac17",
+  storageBucket: "study-task-app-aac17.firebasestorage.app",
+  messagingSenderId: "797260954076",
+  appId: "1:797260954076:web:ce4b909300328a22417719"
+};
+
+const LEGACY_STORAGE_KEY = "studyTaskData";
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+const sharedDataRef = ref(database, "studyTaskData");
 let data = { tasks: [], days: {} };
 let currentDate = null;
 let runningTimerId = null;
@@ -7,6 +27,8 @@ let runningSessionSeconds = 0;
 let runningBaseSeconds = 0;
 let runningTaskId = null;
 let confirmActionResolver = null;
+let initialDataLoaded = false;
+let pendingSave = Promise.resolve();
 
 function formatDateLabel(dateStr) {
   const d = new Date(dateStr);
@@ -18,21 +40,112 @@ function formatDateLabel(dateStr) {
   return `${y}/${m}/${day} (${w})`;
 }
 
-function loadData() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      data = { tasks: [], days: {} };
+function normalizeData(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const tasks = Array.isArray(source.tasks)
+    ? source.tasks.filter(task => typeof task === "string")
+    : [];
+  const sourceDays = source.days && typeof source.days === "object" ? source.days : {};
+  const days = {};
+
+  Object.entries(sourceDays).forEach(([date, dayTasks]) => {
+    if (Array.isArray(dayTasks)) {
+      days[date] = dayTasks.filter(task => task && typeof task === "object");
     }
-  }
-  if (!data.tasks) data.tasks = [];
-  if (!data.days) data.days = {};
+  });
+  return { tasks, days };
 }
 
-function saveData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+function readLegacyData() {
+  const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (!raw) return null;
+  return normalizeData(JSON.parse(raw));
+}
+
+function mergeLegacyData(sharedData, legacyData) {
+  const merged = normalizeData(sharedData);
+  merged.tasks = Array.from(new Set([...merged.tasks, ...legacyData.tasks]));
+
+  Object.entries(legacyData.days).forEach(([date, legacyTasks]) => {
+    const sharedTasks = merged.days[date] || [];
+    const sharedIds = new Set(
+      sharedTasks.map(task => task.id).filter(id => id != null)
+    );
+    merged.days[date] = sharedTasks.concat(
+      legacyTasks.filter(task => task.id == null || !sharedIds.has(task.id))
+    );
+  });
+  return merged;
+}
+
+function setSyncStatus(message, isError = false) {
+  const status = document.getElementById("syncStatus");
+  status.textContent = message;
+  status.classList.toggle("sync-error", isError);
+}
+
+function setEditingEnabled(enabled) {
+  ["datePicker", "addDateBtn", "clearTasksBtn", "addTaskBtn"].forEach(id => {
+    document.getElementById(id).disabled = !enabled;
+  });
+}
+
+function saveData(removeLegacyData = false) {
+  const snapshot = JSON.parse(JSON.stringify(data));
+  setSyncStatus("Firebaseに保存中...");
+  pendingSave = pendingSave
+    .then(() => set(sharedDataRef, snapshot))
+    .then(() => {
+      if (removeLegacyData) localStorage.removeItem(LEGACY_STORAGE_KEY);
+      setSyncStatus("Firebaseと同期済み");
+    })
+    .catch(error => {
+      console.error("Firebaseへの保存に失敗しました。", error);
+      setSyncStatus(`Firebaseへの保存に失敗しました: ${error.message}`, true);
+    });
+  return pendingSave;
+}
+
+function renderData() {
+  renderDateList();
+  renderTaskMasterList();
+  renderTaskList();
+}
+
+function handleSharedData(snapshot) {
+  const isFirstLoad = !initialDataLoaded;
+  const needsInitialSave = !snapshot.exists();
+  let legacyData = null;
+
+  if (isFirstLoad) {
+    try {
+      legacyData = readLegacyData();
+    } catch (error) {
+      console.error("この端末に保存された旧データを読み込めませんでした。", error);
+      setSyncStatus("この端末の旧データを読み込めませんでした。", true);
+      return;
+    }
+  }
+
+  data = snapshot.exists() ? normalizeData(snapshot.val()) : { tasks: [], days: {} };
+  if (legacyData) data = mergeLegacyData(data, legacyData);
+
+  if (isFirstLoad) {
+    initialDataLoaded = true;
+    setEditingEnabled(true);
+    currentDate = getTodayStr();
+    document.getElementById("datePicker").value = currentDate;
+  }
+
+  const addedToday = !data.days[currentDate];
+  if (addedToday) data.days[currentDate] = [];
+  renderData();
+
+  if (needsInitialSave || legacyData !== null || addedToday) {
+    saveData(legacyData !== null);
+  } else if (isFirstLoad) {
+    setSyncStatus("Firebaseと同期済み");
+  }
 }
 
 function showConfirmation(message) {
@@ -414,19 +527,12 @@ function applySessionToTask(markCompleted) {
 }
 
 function init() {
-  loadData();
   const todayStr = getTodayStr();
   document.getElementById("todayText").textContent = formatDateLabel(todayStr);
   const datePicker = document.getElementById("datePicker");
   datePicker.value = todayStr;
-  if (!data.days[todayStr]) {
-    data.days[todayStr] = [];
-    saveData();
-  }
   currentDate = todayStr;
-  renderDateList();
-  renderTaskMasterList();
-  renderTaskList();
+  setEditingEnabled(false);
   document.getElementById("addDateBtn").onclick = () => {
     const selected = datePicker.value;
     if (!selected) return;
@@ -478,6 +584,15 @@ function init() {
   document.getElementById("overlayCloseBtn").onclick = () => {
     closeOverlay();
   };
+
+  onValue(
+    sharedDataRef,
+    handleSharedData,
+    error => {
+      console.error("Firebaseからデータを読み込めませんでした。", error);
+      setSyncStatus(`Firebaseから読み込めませんでした: ${error.message}`, true);
+    }
+  );
 }
 
 document.addEventListener("DOMContentLoaded", init);

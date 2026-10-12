@@ -28,6 +28,18 @@ body {
 .header-right {
   font-size: 14px;
   color: #555;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.sync-status {
+  font-size: 12px;
+}
+
+.sync-error {
+  color: #b42318;
 }
 
 .main {
