@@ -13,8 +13,8 @@ body {
 }
 
 .header {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   margin-bottom: 16px;
 }
@@ -22,7 +22,13 @@ body {
 .header-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.header-moon {
+  font-size: 32px;
+  line-height: 1;
 }
 
 .header-right {
@@ -32,6 +38,7 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
+  text-align: right;
 }
 
 .sync-status {
@@ -128,10 +135,21 @@ h2 {
   margin: 0;
 }
 
-.planned-duration-total {
+.planned-duration-summary {
   margin: 8px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#plannedDurationTotal {
   font-size: 20px;
   font-weight: 700;
+}
+
+#remainingDurationTotal {
+  font-size: 16px;
 }
 
 .completion-summary {
@@ -229,7 +247,7 @@ button.secondary {
 }
 
 .col-action {
-  width: 160px;
+  width: 210px;
   text-align: center;
 }
 
@@ -239,11 +257,13 @@ button.secondary {
 }
 
 .action-buttons {
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.action-buttons button + button {
-  margin-left: 12px;
+.action-buttons button {
+  padding: 6px 8px;
 }
 
 .task-name-input {
@@ -325,10 +345,11 @@ button.secondary {
 }
 
 .overlay-content {
+  box-sizing: border-box;
   background-color: #ffffff;
   border-radius: 12px;
-  padding: 20px;
-  width: 320px;
+  padding: 40px;
+  width: min(640px, calc(100% - 32px));
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
@@ -340,19 +361,25 @@ button.secondary {
 }
 
 .overlay-task-name {
-  font-size: 18px;
+  font-size: 36px;
   font-weight: 600;
 }
 
 .overlay-date {
-  font-size: 14px;
+  font-size: 28px;
   color: #555555;
 }
 
-.overlay-timer {
-  font-size: 32px;
+.overlay-planned-remaining {
+  margin: 12px 0 4px;
+  font-size: 24px;
   text-align: center;
-  margin-bottom: 16px;
+}
+
+.overlay-timer {
+  font-size: 64px;
+  text-align: center;
+  margin-bottom: 32px;
 }
 
 .overlay-buttons {
@@ -363,9 +390,105 @@ button.secondary {
 }
 
 .overlay-buttons button {
-  min-width: 80px;
+  min-width: 140px;
+  padding: 12px 20px;
+  font-size: 24px;
+}
+
+.move-content {
+  box-sizing: border-box;
+  width: min(600px, calc(100% - 32px));
+  padding: 32px;
+  border-radius: 12px;
+  background-color: #ffffff;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.move-title {
+  margin-bottom: 20px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.move-date-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 18px;
+}
+
+.move-date-controls input {
+  font-size: 18px;
+}
+
+.move-error {
+  min-height: 20px;
+  margin-top: 8px;
+  color: #b42318;
+}
+
+.move-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (max-width: 640px) {
+  .overlay-content {
+    padding: 24px;
+  }
+
+  .overlay-task-name {
+    font-size: 28px;
+  }
+
+  .overlay-date {
+    font-size: 22px;
+  }
+
+  .overlay-planned-remaining {
+    font-size: 20px;
+  }
+
+  .overlay-timer {
+    font-size: 52px;
+  }
+
+  .overlay-buttons button {
+    min-width: 120px;
+    padding: 10px 14px;
+    font-size: 20px;
+  }
+
+  .move-content {
+    padding: 24px;
+  }
 }
 
 .today-label {
   font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    row-gap: 8px;
+  }
+
+  .header-left {
+    grid-column: 1 / -1;
+  }
+
+  .header-moon {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .header-right {
+    grid-column: 2;
+    grid-row: 2;
+  }
 }

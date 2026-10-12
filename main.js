@@ -230,6 +230,11 @@ function getPlannedDurationSeconds(task) {
   return plannedSeconds == null ? 30 * 60 : plannedSeconds;
 }
 
+function getTaskRemainingSeconds(task) {
+  const actualSeconds = getTaskDurationSeconds(task, "actualMinutes") || 0;
+  return Math.max(0, getPlannedDurationSeconds(task) - actualSeconds);
+}
+
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -247,6 +252,11 @@ function updatePlannedDurationTotal(tasks) {
   }, 0);
   document.getElementById("plannedDurationTotal").textContent =
     `所要時間計：${formatDuration(totalSeconds)}`;
+  const remainingSeconds = tasks.reduce((total, task) => {
+    return task.completed ? total : total + getTaskRemainingSeconds(task);
+  }, 0);
+  document.getElementById("remainingDurationTotal").textContent =
+    `（残：${formatDuration(remainingSeconds)}）`;
 }
 
 function updateCompletionRate(tasks) {
@@ -344,6 +354,7 @@ function createTaskRow(task, index) {
     saveData();
     renderDateList();
     updateCompletionRate(data.days[currentDate]);
+    updatePlannedDurationTotal(data.days[currentDate]);
   };
   tdCheck.appendChild(cb);
   tr.appendChild(tdCheck);
@@ -372,6 +383,7 @@ function createTaskRow(task, index) {
       saveData();
       updateCompletionRate(data.days[currentDate]);
       updatePlannedDurationTotal(data.days[currentDate]);
+      updateOverlayPlannedRemaining();
     }
   ));
   tr.appendChild(tdPlanned);
@@ -381,6 +393,8 @@ function createTaskRow(task, index) {
     totalSeconds => {
       task.actualMinutes = totalSeconds / 60;
       saveData();
+      updatePlannedDurationTotal(data.days[currentDate]);
+      updateOverlayPlannedRemaining();
     },
     true
   ));
@@ -393,6 +407,16 @@ function createTaskRow(task, index) {
     openOverlayForTask(task);
   };
   tdAction.appendChild(startBtn);
+  const moveBtn = document.createElement("button");
+  moveBtn.type = "button";
+  moveBtn.className = "move-task-btn";
+  moveBtn.textContent = "移動";
+  moveBtn.setAttribute("aria-label", `${task.name || "選択されたタスク"}を別の日付へ移動`);
+  moveBtn.onclick = () => {
+    openMoveDialog(task);
+  };
+  tdAction.appendChild(moveBtn);
+
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "delete-task-btn";
@@ -461,6 +485,7 @@ function openOverlayForTask(task) {
   runningBaseSeconds = getTaskDurationSeconds(task, "actualMinutes") || 0;
   runningSessionSeconds = 0;
   timerEl.textContent = "00:00";
+  updateOverlayPlannedRemaining();
   const startBtn = document.getElementById("overlayStartBtn");
   const pauseBtn = document.getElementById("overlayPauseBtn");
   const finishBtn = document.getElementById("overlayFinishBtn");
@@ -485,6 +510,67 @@ function updateOverlayTimerDisplay() {
   const m = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const s = String(totalSeconds % 60).padStart(2, "0");
   timerEl.textContent = `${m}:${s}`;
+  updateOverlayPlannedRemaining();
+}
+
+function updateOverlayPlannedRemaining() {
+  if (!currentDate || !runningTaskId) return;
+  const task = (data.days[currentDate] || []).find(item => item.id === runningTaskId);
+  if (!task) return;
+  const elapsedSeconds = runningBaseSeconds + runningSessionSeconds;
+  const remainingSeconds = Math.max(0, getPlannedDurationSeconds(task) - elapsedSeconds);
+  document.getElementById("overlayPlannedRemaining").textContent =
+    `所要時間：${formatDuration(remainingSeconds)}`;
+}
+
+function openMoveDialog(task) {
+  const sourceDate = currentDate;
+  const sourceTasks = data.days[sourceDate];
+  const taskIndex = sourceTasks.indexOf(task);
+  if (taskIndex < 0) return;
+
+  const moveOverlay = document.getElementById("moveOverlay");
+  const moveDatePicker = document.getElementById("moveDatePicker");
+  const moveError = document.getElementById("moveError");
+  const nextDate = new Date(`${sourceDate}T00:00:00`);
+  nextDate.setDate(nextDate.getDate() + 1);
+  moveDatePicker.value = [
+    nextDate.getFullYear(),
+    String(nextDate.getMonth() + 1).padStart(2, "0"),
+    String(nextDate.getDate()).padStart(2, "0")
+  ].join("-");
+  moveError.textContent = "";
+  moveDatePicker.onchange = () => {
+    moveError.textContent = "";
+  };
+  moveOverlay.classList.remove("hidden");
+  moveDatePicker.focus();
+
+  document.getElementById("moveCancelBtn").onclick = () => {
+    moveOverlay.classList.add("hidden");
+  };
+  document.getElementById("moveAcceptBtn").onclick = () => {
+    const destinationDate = moveDatePicker.value;
+    if (!destinationDate || destinationDate === sourceDate) {
+      moveError.textContent = "移動元とは異なる日付を選択してください。";
+      moveDatePicker.focus();
+      return;
+    }
+    if (runningTaskId === task.id) closeOverlay();
+
+    sourceTasks.splice(taskIndex, 1);
+    ensureDay(destinationDate);
+    data.days[destinationDate].push(task);
+    currentDate = destinationDate;
+    document.getElementById("datePicker").value = destinationDate;
+    moveOverlay.classList.add("hidden");
+    saveData();
+    renderDateList();
+    renderTaskList();
+  };
+  moveOverlay.onkeydown = event => {
+    if (event.key === "Escape") moveOverlay.classList.add("hidden");
+  };
 }
 
 function startTimer() {
@@ -575,6 +661,7 @@ function init() {
     runningBaseSeconds = task ? getTaskDurationSeconds(task, "actualMinutes") || 0 : 0;
     runningSessionSeconds = 0;
     document.getElementById("overlayTimer").textContent = "00:00";
+    updateOverlayPlannedRemaining();
   };
   document.getElementById("overlayFinishBtn").onclick = () => {
     stopTimer();

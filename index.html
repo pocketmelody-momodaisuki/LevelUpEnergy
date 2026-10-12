@@ -14,6 +14,7 @@
         <input type="date" id="datePicker">
         <button id="addDateBtn">この日付のリストを作成</button>
       </div>
+      <span class="header-moon" role="img" aria-label="月">🌙</span>
       <div class="header-right">
         <span class="today-label">今日: <span id="todayText"></span></span>
         <span id="syncStatus" class="sync-status" role="status" aria-live="polite">Firebaseに接続中...</span>
@@ -46,7 +47,10 @@
             <button id="addTaskBtn">タスク追加</button>
           </div>
         </div>
-        <div id="plannedDurationTotal" class="planned-duration-total">所要時間計：0分</div>
+        <div class="planned-duration-summary">
+          <span id="plannedDurationTotal">所要時間計：0分</span>
+          <span id="remainingDurationTotal"></span>
+        </div>
         <table class="task-table">
           <thead>
             <tr>
@@ -68,12 +72,27 @@
           <div class="overlay-task-name" id="overlayTaskName"></div>
           <div class="overlay-date" id="overlayDate"></div>
         </div>
+        <div id="overlayPlannedRemaining" class="overlay-planned-remaining"></div>
         <div class="overlay-timer" id="overlayTimer">00:00</div>
         <div class="overlay-buttons">
           <button id="overlayStartBtn">開始</button>
           <button id="overlayPauseBtn">一時停止</button>
           <button id="overlayFinishBtn">完了</button>
           <button id="overlayCloseBtn">閉じる</button>
+        </div>
+      </div>
+    </div>
+    <div id="moveOverlay" class="overlay hidden">
+      <div class="move-content" role="dialog" aria-modal="true" aria-labelledby="moveDialogTitle">
+        <div id="moveDialogTitle" class="move-title">移動先の日付を選択してください</div>
+        <div class="move-date-controls">
+          <label for="moveDatePicker">日付</label>
+          <input type="date" id="moveDatePicker">
+        </div>
+        <div id="moveError" class="move-error" role="status"></div>
+        <div class="move-buttons">
+          <button id="moveCancelBtn" class="secondary">キャンセル</button>
+          <button id="moveAcceptBtn">この日付へタスクを移動</button>
         </div>
       </div>
     </div>
