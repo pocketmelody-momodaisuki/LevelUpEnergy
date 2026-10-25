@@ -1,9 +1,12 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
 import {
   getDatabase,
+  get,
   onValue,
   ref,
-  set
+  set,
+  update,
+  remove
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -18,10 +21,21 @@ const firebaseConfig = {
 
 const LEGACY_STORAGE_KEY = "studyTaskData";
 const MAX_OPERATION_LOGS = 500;
+const WEEKDAYS = [
+  ["mon", "月"],
+  ["tue", "火"],
+  ["wed", "水"],
+  ["thu", "木"],
+  ["fri", "金"],
+  ["sat", "土"],
+  ["sun", "日"]
+];
 const app = initializeApp(firebaseConfig);
 const database = getDatabase(app);
 const sharedDataRef = ref(database, "studyTaskData");
-let data = { tasks: [], days: {}, logs: [] };
+let data = { tasks: [], days: {}, logs: [], presets: {} };
+let dragons = {};
+let currentDragonId = null;
 let currentDate = null;
 let runningTimerId = null;
 let runningSessionSeconds = 0;
@@ -31,7 +45,12 @@ let screenWakeLock = null;
 let wakeLockRequestPending = false;
 let confirmActionResolver = null;
 let initialDataLoaded = false;
+let dragonsLoaded = false;
+let currentDragonLoaded = false;
+let dragonInitializationStarted = false;
+let initialDragonSetup = false;
 let pendingSave = Promise.resolve();
+let pendingDragonSave = Promise.resolve();
 let taskReorderGesture = null;
 const taskByRow = new WeakMap();
 
@@ -52,6 +71,10 @@ function normalizeData(value) {
     : [];
   const sourceDays = source.days && typeof source.days === "object" ? source.days : {};
   const days = {};
+  const sourcePresets = source.presets && typeof source.presets === "object"
+    ? source.presets
+    : {};
+  const presets = {};
   const logs = Array.isArray(source.logs)
     ? source.logs.filter(entry => entry && typeof entry.timestamp === "string" && typeof entry.message === "string")
     : [];
@@ -59,9 +82,30 @@ function normalizeData(value) {
   Object.entries(sourceDays).forEach(([date, dayTasks]) => {
     if (Array.isArray(dayTasks)) {
       days[date] = dayTasks.filter(task => task && typeof task === "object");
+    } else if (dayTasks && typeof dayTasks === "object") {
+      const entries = Object.entries(dayTasks);
+      if (entries.every(([key]) => /^\d+$/.test(key))) {
+        days[date] = entries
+          .sort(([left], [right]) => Number(left) - Number(right))
+          .map(([, task]) => task)
+          .filter(task => task && typeof task === "object");
+      }
     }
   });
-  return { tasks, days, logs };
+  Object.entries(sourcePresets).forEach(([id, preset]) => {
+    if (!preset || typeof preset !== "object") return;
+    const sourceRepeat = preset.repeat && typeof preset.repeat === "object" ? preset.repeat : {};
+    const repeat = {};
+    WEEKDAYS.forEach(([key]) => {
+      repeat[key] = sourceRepeat[key] === true;
+    });
+    presets[id] = {
+      name: typeof preset.name === "string" ? preset.name : "",
+      plannedMinutes: Number(preset.plannedMinutes) || 30,
+      repeat
+    };
+  });
+  return { tasks, days, logs, presets };
 }
 
 function readLegacyData() {
@@ -240,8 +284,114 @@ function handleTouchMove(event) {
   moveTaskReorder(touch.clientX, touch.clientY, event);
 }
 
+function getWeekdayKey(dateStr) {
+  const date = new Date(`${dateStr}T00:00:00`);
+  if (isNaN(date.getTime())) return null;
+  return WEEKDAYS[(date.getDay() + 6) % 7][0];
+}
+
+function getTasksFromPresets(dateStr) {
+  const weekday = getWeekdayKey(dateStr);
+  if (!weekday) return [];
+  return Object.values(data.presets)
+    .filter(preset => preset.repeat[weekday])
+    .map(preset => ({
+      id: Date.now() + "_" + Math.random().toString(16).slice(2),
+      name: preset.name,
+      plannedMinutes: preset.plannedMinutes,
+      actualMinutes: null,
+      completed: false
+    }));
+}
+
+function renderPresetList() {
+  const list = document.getElementById("presetList");
+  list.innerHTML = "";
+  const entries = Object.entries(data.presets);
+  if (entries.length === 0) {
+    const emptyMessage = document.createElement("li");
+    emptyMessage.className = "preset-empty";
+    emptyMessage.textContent = "プリセットはまだありません。";
+    list.appendChild(emptyMessage);
+    return;
+  }
+
+  entries.forEach(([id, preset]) => {
+    const item = document.createElement("li");
+    item.className = "preset-item";
+    const details = document.createElement("div");
+    details.className = "preset-details";
+    const name = document.createElement("strong");
+    name.textContent = preset.name;
+    const schedule = document.createElement("span");
+    const repeatedDays = WEEKDAYS
+      .filter(([key]) => preset.repeat[key])
+      .map(([, label]) => label)
+      .join("・");
+    schedule.textContent =
+      `${preset.plannedMinutes}分 / ${repeatedDays || "曜日指定なし"}`;
+    details.append(name, schedule);
+
+    const actions = document.createElement("div");
+    actions.className = "preset-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "secondary";
+    editButton.textContent = "編集";
+    editButton.onclick = () => editPreset(id, preset);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-task-btn";
+    deleteButton.textContent = "削除";
+    deleteButton.onclick = () => deletePreset(id, preset);
+    actions.append(editButton, deleteButton);
+    item.append(details, actions);
+    list.appendChild(item);
+  });
+}
+
+function resetPresetForm() {
+  document.getElementById("presetForm").reset();
+  document.getElementById("presetMinutes").value = "30";
+  document.getElementById("presetFormTitle").textContent = "プリセットを追加";
+  document.getElementById("savePresetBtn").textContent = "追加";
+  document.getElementById("cancelPresetEditBtn").classList.add("hidden");
+  document.getElementById("presetError").textContent = "";
+  document.getElementById("presetForm").dataset.editingId = "";
+}
+
+function editPreset(id, preset) {
+  const form = document.getElementById("presetForm");
+  form.dataset.editingId = id;
+  document.getElementById("presetName").value = preset.name;
+  document.getElementById("presetMinutes").value = String(preset.plannedMinutes);
+  form.querySelectorAll('input[name="presetDay"]').forEach(checkbox => {
+    checkbox.checked = preset.repeat[checkbox.value] === true;
+  });
+  document.getElementById("presetFormTitle").textContent = "プリセットを編集";
+  document.getElementById("savePresetBtn").textContent = "変更を保存";
+  document.getElementById("cancelPresetEditBtn").classList.remove("hidden");
+  document.getElementById("presetError").textContent = "";
+  document.getElementById("presetName").focus();
+}
+
+async function deletePreset(id, preset) {
+  if (!await showConfirmation(`プリセット「${preset.name}」を削除しますか？`)) return;
+  try {
+    await remove(ref(database, `studyTaskData/presets/${id}`));
+    delete data.presets[id];
+    renderPresetList();
+    setSyncStatus("Firebaseと同期済み");
+  } catch (error) {
+    console.error("プリセットの削除に失敗しました。", error);
+    document.getElementById("presetError").textContent =
+      `プリセットを削除できませんでした: ${error.message}`;
+    setSyncStatus(`プリセットの削除に失敗しました: ${error.message}`, true);
+  }
+}
+
 function setEditingEnabled(enabled) {
-  ["datePicker", "addDateBtn", "clearTasksBtn", "addTaskBtn", "operationLogBtn"].forEach(id => {
+  ["datePicker", "addDateBtn", "clearTasksBtn", "addTaskBtn", "operationLogBtn", "openPresetsBtn"].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
 }
@@ -266,12 +416,13 @@ function renderData() {
   renderDateList();
   renderTaskMasterList();
   renderTaskList();
+  renderPresetList();
   if (!document.getElementById("operationLogOverlay").classList.contains("hidden")) {
     renderOperationLogs();
   }
 }
 
-function handleSharedData(snapshot) {
+async function handleSharedData(snapshot) {
   const isFirstLoad = !initialDataLoaded;
   const needsInitialSave = !snapshot.exists();
   let legacyData = null;
@@ -288,24 +439,47 @@ function handleSharedData(snapshot) {
 
   data = snapshot.exists()
     ? normalizeData(snapshot.val())
-    : { tasks: [], days: {}, logs: [] };
+    : { tasks: [], days: {}, logs: [], presets: {} };
   if (legacyData) data = mergeLegacyData(data, legacyData);
 
   if (isFirstLoad) {
     initialDataLoaded = true;
-    setEditingEnabled(true);
     currentDate = getTodayStr();
     document.getElementById("datePicker").value = currentDate;
   }
 
   const addedToday = !data.days[currentDate];
-  if (addedToday) data.days[currentDate] = [];
+  if (addedToday) data.days[currentDate] = getTasksFromPresets(currentDate);
   renderData();
 
-  if (needsInitialSave || legacyData !== null || addedToday) {
-    saveData(legacyData !== null);
-  } else if (isFirstLoad) {
-    setSyncStatus("Firebaseと同期済み");
+  if (legacyData !== null) {
+    setEditingEnabled(true);
+    saveData(true);
+  } else if (addedToday) {
+    setEditingEnabled(false);
+    try {
+      const tasks = data.days[currentDate];
+      await pendingSave;
+      await update(sharedDataRef, {
+        [`days/${currentDate}`]: tasks.length > 0 ? tasks : {}
+      });
+      const refreshed = await get(sharedDataRef);
+      data = normalizeData(refreshed.val());
+      renderData();
+      setSyncStatus("Firebaseと同期済み");
+    } catch (error) {
+      console.error("今日の日付の保存に失敗しました。", error);
+      setSyncStatus(`今日の日付を保存できませんでした: ${error.message}`, true);
+    } finally {
+      setEditingEnabled(true);
+    }
+  } else {
+    setEditingEnabled(true);
+    if (needsInitialSave) {
+      saveData();
+    } else if (isFirstLoad) {
+      setSyncStatus("Firebaseと同期済み");
+    }
   }
 }
 
@@ -333,6 +507,269 @@ function getTodayStr() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function createDragon(name) {
+  return {
+    name: name.slice(0, 10),
+    stage: "egg",
+    type: null,
+    branch: null,
+    level: 1,
+    xp: 0,
+    nextLevelXp: 10,
+    attack: 1,
+    defense: 1,
+    createdAt: getTodayStr(),
+    logs: {
+      hatchedAt: "",
+      becameChildAt: "",
+      becameAdultAt: "",
+      becameElderAt: "",
+      totalTasksCompleted: 0,
+      totalXpEarned: 0,
+      dailyBonusDates: {}
+    }
+  };
+}
+
+function normalizeDragon(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const level = Number.isInteger(source.level) && source.level > 0 ? source.level : 1;
+  const logs = source.logs && typeof source.logs === "object" ? source.logs : {};
+  const stage = ["egg", "child", "adult", "elder"].includes(source.stage) ? source.stage : "egg";
+  const validType = ["cute", "cool", "yuru"].includes(source.type);
+  return {
+    name: typeof source.name === "string" ? source.name.slice(0, 10) : "たまご",
+    stage,
+    type: stage === "egg" ? null : validType ? source.type : "cute",
+    branch: stage === "elder"
+      ? source.branch === 1 ? 1 : 0
+      : null,
+    level,
+    xp: Number.isFinite(source.xp) && source.xp >= 0 ? source.xp : 0,
+    nextLevelXp: Number.isFinite(source.nextLevelXp) && source.nextLevelXp > 0
+      ? source.nextLevelXp
+      : level * 10,
+    attack: Number.isFinite(source.attack) && source.attack >= 1 ? source.attack : 1,
+    defense: Number.isFinite(source.defense) && source.defense >= 1 ? source.defense : 1,
+    createdAt: typeof source.createdAt === "string" ? source.createdAt : getTodayStr(),
+    logs: {
+      hatchedAt: typeof logs.hatchedAt === "string" ? logs.hatchedAt : "",
+      becameChildAt: typeof logs.becameChildAt === "string" ? logs.becameChildAt : "",
+      becameAdultAt: typeof logs.becameAdultAt === "string" ? logs.becameAdultAt : "",
+      becameElderAt: typeof logs.becameElderAt === "string" ? logs.becameElderAt : "",
+      totalTasksCompleted: Number.isFinite(logs.totalTasksCompleted)
+        ? logs.totalTasksCompleted
+        : 0,
+      totalXpEarned: Number.isFinite(logs.totalXpEarned) ? logs.totalXpEarned : 0,
+      dailyBonusDates: logs.dailyBonusDates && typeof logs.dailyBonusDates === "object"
+        ? logs.dailyBonusDates
+        : {}
+    }
+  };
+}
+
+function getDragonImagePath(dragon) {
+  if (dragon.stage === "egg") {
+    return new URL("./images/dragons/egg.png", import.meta.url).href;
+  }
+  const branchSuffix = dragon.stage === "elder" ? `_${dragon.branch}` : "";
+  return new URL(
+    `./images/dragons/${dragon.stage}_${dragon.type}${branchSuffix}.png`,
+    import.meta.url
+  ).href;
+}
+
+function getDragonRarity(dragon) {
+  if (dragon.stage === "elder") return dragon.branch === 1 ? 4 : 3;
+  if (dragon.stage === "adult") return 2;
+  return 1;
+}
+
+function persistDragon(id, dragon) {
+  const snapshot = JSON.parse(JSON.stringify(dragon));
+  pendingDragonSave = pendingDragonSave
+    .then(() => set(ref(database, `dragons/${id}`), snapshot))
+    .catch(error => {
+      console.error("ドラゴンの保存に失敗しました。", error);
+      document.getElementById("dragonStatus").textContent =
+        `ドラゴンを保存できませんでした: ${error.message}`;
+      setSyncStatus(`ドラゴンの保存に失敗しました: ${error.message}`, true);
+    });
+  return pendingDragonSave;
+}
+
+function renderDragonMemories(dragon) {
+  const logs = dragon.logs || {};
+  document.getElementById("memoryHatched").textContent = logs.hatchedAt || "まだ";
+  document.getElementById("memoryChild").textContent = logs.becameChildAt || "まだ";
+  document.getElementById("memoryAdult").textContent = logs.becameAdultAt || "まだ";
+  document.getElementById("memoryElder").textContent = logs.becameElderAt || "まだ";
+  document.getElementById("memoryTasks").textContent = String(logs.totalTasksCompleted || 0);
+  document.getElementById("memoryXp").textContent = String(logs.totalXpEarned || 0);
+}
+
+function renderDragonCollection() {
+  const collection = document.getElementById("dragonCollection");
+  collection.innerHTML = "";
+  Object.entries(dragons).forEach(([id, dragon]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dragon-collection-item";
+    if (id === currentDragonId) button.classList.add("active");
+    button.setAttribute("aria-label", `${dragon.name}、レア度${getDragonRarity(dragon)}`);
+    button.onclick = async () => {
+      try {
+        await set(ref(database, "currentDragon"), id);
+        currentDragonId = id;
+        renderDragonManager();
+      } catch (error) {
+        console.error("育成中のドラゴンの切り替えに失敗しました。", error);
+        document.getElementById("dragonStatus").textContent =
+          `ドラゴンを切り替えられませんでした: ${error.message}`;
+      }
+    };
+    const image = document.createElement("img");
+    image.src = getDragonImagePath(dragon);
+    image.alt = "";
+    const rarity = document.createElement("span");
+    rarity.className = "dragon-rarity";
+    rarity.textContent = "★".repeat(getDragonRarity(dragon));
+    const name = document.createElement("span");
+    name.className = "dragon-collection-name";
+    name.textContent = dragon.name;
+    button.append(image, rarity, name);
+    collection.appendChild(button);
+  });
+}
+
+function renderDragonManager() {
+  const dragon = dragons[currentDragonId];
+  const panel = document.getElementById("dragonCurrentPanel");
+  const newDragonForm = document.getElementById("newDragonForm");
+  if (!dragon) {
+    panel.classList.add("hidden");
+    newDragonForm.classList.toggle("hidden", !initialDragonSetup);
+    newDragonForm.querySelector("label").textContent = "卵の名前（10文字まで）";
+    newDragonForm.querySelector('button[type="submit"]').textContent = "育てる";
+    renderDragonCollection();
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  panel.dataset.type = dragon.type || "egg";
+  const image = document.getElementById("dragonImage");
+  image.src = getDragonImagePath(dragon);
+  image.alt = `${dragon.name}（${dragon.stage}）`;
+  document.getElementById("dragonNameInput").value = dragon.name;
+  document.getElementById("dragonStageLabel").textContent =
+    ({ egg: "🥚 卵", child: "🐣 子竜", adult: "🐉 成竜", elder: "🐲 古竜" })[dragon.stage] || dragon.stage;
+  document.getElementById("dragonLevelLabel").textContent = `Lv. ${dragon.level}`;
+  const xpPercent = dragon.nextLevelXp > 0
+    ? Math.min(100, Math.round((dragon.xp / dragon.nextLevelXp) * 100))
+    : 0;
+  const xpTrack = document.querySelector(".dragon-xp-track");
+  xpTrack.setAttribute("aria-valuemax", String(dragon.nextLevelXp));
+  xpTrack.setAttribute("aria-valuenow", String(dragon.xp));
+  document.getElementById("dragonXpFill").style.width = `${xpPercent}%`;
+  document.getElementById("dragonXpLabel").textContent =
+    `XP ${dragon.xp} / ${dragon.nextLevelXp}`;
+  document.getElementById("dragonStats").textContent =
+    `攻撃力 ${dragon.attack}　/　防御力 ${dragon.defense}`;
+  const typeLabel = ({ cute: "キュート", cool: "クール", yuru: "ゆる" })[dragon.type];
+  document.getElementById("dragonType").textContent =
+    typeLabel ? `属性: ${typeLabel}` : "属性: 孵化後に決定";
+  const canStartNewDragon = Object.values(dragons).some(item => item.stage === "elder");
+  newDragonForm.classList.toggle("hidden", !initialDragonSetup && !canStartNewDragon);
+  newDragonForm.querySelector("label").textContent = initialDragonSetup
+    ? "卵の名前（10文字まで）"
+    : "新しい卵の名前（10文字まで）";
+  newDragonForm.querySelector('button[type="submit"]').textContent = initialDragonSetup
+    ? "育てる"
+    : "新しい卵を育てる";
+  renderDragonMemories(dragon);
+  renderDragonCollection();
+}
+
+function getLocalDateString() {
+  return getTodayStr();
+}
+
+function applyDragonEvolution(dragon) {
+  const today = getLocalDateString();
+  if (dragon.level >= 5 && dragon.stage === "egg") {
+    const types = ["cute", "cool", "yuru"];
+    dragon.type = types[Math.floor(Math.random() * types.length)];
+    dragon.stage = "child";
+    dragon.logs.hatchedAt = today;
+    dragon.logs.becameChildAt = today;
+  }
+  if (dragon.level >= 10 && dragon.stage === "child") {
+    dragon.stage = "adult";
+    dragon.logs.becameAdultAt = today;
+  }
+  if (dragon.level >= 20 && dragon.stage === "adult") {
+    dragon.stage = "elder";
+    dragon.branch = Math.floor(Math.random() * 2);
+    dragon.logs.becameElderAt = today;
+  }
+}
+
+function addDragonXp(dragon, amount) {
+  dragon.xp += amount;
+  dragon.logs.totalXpEarned = (dragon.logs.totalXpEarned || 0) + amount;
+  while (dragon.xp >= dragon.nextLevelXp) {
+    dragon.xp -= dragon.nextLevelXp;
+    dragon.level += 1;
+    dragon.nextLevelXp = dragon.level * 10;
+    const targets = Math.floor(Math.random() * 3);
+    const statGain = 1 + Math.floor(Math.random() * 3);
+    if (targets !== 1) dragon.attack += statGain;
+    if (targets !== 0) dragon.defense += statGain;
+    applyDragonEvolution(dragon);
+  }
+}
+
+function awardDragonRewardsForCompletion(date, task) {
+  const dragon = dragons[currentDragonId];
+  if (!dragon || task.dragonXpAwarded) return;
+  task.dragonXpAwarded = true;
+  dragon.logs.totalTasksCompleted = (dragon.logs.totalTasksCompleted || 0) + 1;
+  addDragonXp(dragon, 1);
+
+  const dayTasks = data.days[date] || [];
+  const dailyBonusDates = dragon.logs.dailyBonusDates || {};
+  if (
+    dayTasks.length > 0 &&
+    dayTasks.every(dayTask => dayTask.completed) &&
+    !dailyBonusDates[date]
+  ) {
+    dragon.logs.dailyBonusDates = dailyBonusDates;
+    dailyBonusDates[date] = true;
+    addDragonXp(dragon, 5);
+  }
+  void persistDragon(currentDragonId, dragon);
+  renderDragonManager();
+}
+
+function initializeDragonData() {
+  if (!dragonsLoaded || !currentDragonLoaded || dragonInitializationStarted) return;
+  dragonInitializationStarted = true;
+  document.getElementById("dragonStatus").textContent = "";
+  if (!dragons[currentDragonId]) {
+    const firstDragonId = Object.keys(dragons)[0];
+    if (firstDragonId) {
+      currentDragonId = firstDragonId;
+      void set(ref(database, "currentDragon"), firstDragonId).catch(error => {
+        console.error("育成中のドラゴンを設定できませんでした。", error);
+        setSyncStatus(`育成中のドラゴンを設定できませんでした: ${error.message}`, true);
+      });
+    } else {
+      currentDragonId = null;
+    }
+  }
+  renderDragonManager();
 }
 
 function ensureDay(dateStr) {
@@ -522,7 +959,11 @@ function createTaskRow(task, index) {
   cb.type = "checkbox";
   cb.checked = !!task.completed;
   cb.onchange = () => {
+    const wasCompleted = task.completed === true;
     task.completed = cb.checked;
+    if (!wasCompleted && task.completed) {
+      awardDragonRewardsForCompletion(currentDate, task);
+    }
     addOperationLog(
       `${formatLogDate(currentDate)}の${getTaskLabel(task)}を${task.completed ? "完了しました" : "未完了に戻しました"}。`
     );
@@ -867,7 +1308,11 @@ function applySessionToTask(markCompleted) {
   if (!task) return;
   task.actualMinutes = (runningBaseSeconds + runningSessionSeconds) / 60;
   if (markCompleted) {
+    const wasCompleted = task.completed === true;
     task.completed = true;
+    if (!wasCompleted) {
+      awardDragonRewardsForCompletion(currentDate, task);
+    }
     addOperationLog(
       `${formatLogDate(currentDate)}の${getTaskLabel(task)}が完了しました（実績時間：${formatDuration(Math.round(task.actualMinutes * 60))}）。`
     );
@@ -887,18 +1332,186 @@ function init() {
   datePicker.value = todayStr;
   currentDate = todayStr;
   setEditingEnabled(false);
-  document.getElementById("addDateBtn").onclick = () => {
+  document.getElementById("addDateBtn").onclick = async () => {
     const selected = datePicker.value;
     if (!selected) return;
     const isNewDate = !data.days[selected];
-    ensureDay(selected);
-    currentDate = selected;
+    let canSelectDate = true;
     if (isNewDate) {
-      addOperationLog(`${formatLogDate(selected)}のタスクリストを作成しました。`);
+      const previousLogs = data.logs.slice();
+      const tasks = getTasksFromPresets(selected);
+      data.days[selected] = tasks;
+      addOperationLog(
+        `${formatLogDate(selected)}のタスクリストを作成しました。` +
+        (tasks.length > 0 ? `（プリセットから${tasks.length}件追加）` : "")
+      );
+      setSyncStatus("Firebaseに保存中...");
+      document.getElementById("addDateBtn").disabled = true;
+      try {
+        await pendingSave;
+        const updates = {
+          [`days/${selected}`]: tasks.length > 0 ? tasks : {},
+          logs: data.logs
+        };
+        await update(sharedDataRef, updates);
+        const snapshot = await get(sharedDataRef);
+        const refreshedData = normalizeData(snapshot.val());
+        if (!refreshedData.days[selected]) {
+          throw new Error("保存後に日付を読み込めませんでした。");
+        }
+        data = refreshedData;
+        setSyncStatus("Firebaseと同期済み");
+      } catch (error) {
+        console.error("新しい日付の保存に失敗しました。", error);
+        delete data.days[selected];
+        data.logs = previousLogs;
+        canSelectDate = false;
+        setSyncStatus(`新しい日付を保存できませんでした: ${error.message}`, true);
+      } finally {
+        document.getElementById("addDateBtn").disabled = false;
+      }
+    } else {
+      ensureDay(selected);
     }
-    saveData();
+    if (canSelectDate) {
+      currentDate = selected;
+      document.getElementById("datePicker").value = selected;
+    }
     renderDateList();
     renderTaskList();
+  };
+  document.getElementById("openPresetsBtn").onclick = () => {
+    renderPresetList();
+    document.getElementById("presetsOverlay").classList.remove("hidden");
+    document.getElementById("presetName").focus();
+  };
+  document.getElementById("closePresetsBtn").onclick = () => {
+    document.getElementById("presetsOverlay").classList.add("hidden");
+    resetPresetForm();
+  };
+  document.getElementById("cancelPresetEditBtn").onclick = resetPresetForm;
+  document.getElementById("presetsOverlay").onkeydown = event => {
+    if (event.key === "Escape") {
+      document.getElementById("presetsOverlay").classList.add("hidden");
+      resetPresetForm();
+    }
+  };
+  document.getElementById("presetForm").onsubmit = async event => {
+    event.preventDefault();
+    const name = document.getElementById("presetName").value.trim();
+    const plannedMinutes = Number(document.getElementById("presetMinutes").value);
+    const errorElement = document.getElementById("presetError");
+    if (!name || !Number.isInteger(plannedMinutes) || plannedMinutes < 1) {
+      errorElement.textContent = "タスク名と1分以上の所要時間を入力してください。";
+      return;
+    }
+
+    const repeat = {};
+    document.querySelectorAll('#presetForm input[name="presetDay"]').forEach(checkbox => {
+      repeat[checkbox.value] = checkbox.checked;
+    });
+    const preset = { name, plannedMinutes, repeat };
+    const editingId = event.currentTarget.dataset.editingId;
+    const id = editingId || (
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}_${Math.random().toString(16).slice(2)}`
+    );
+    try {
+      await set(ref(database, `studyTaskData/presets/${id}`), preset);
+      data.presets[id] = preset;
+      renderPresetList();
+      resetPresetForm();
+      setSyncStatus("Firebaseと同期済み");
+    } catch (error) {
+      console.error("プリセットの保存に失敗しました。", error);
+      errorElement.textContent = `プリセットを保存できませんでした: ${error.message}`;
+      setSyncStatus(`プリセットの保存に失敗しました: ${error.message}`, true);
+    }
+  };
+  document.getElementById("dragonManagerBtn").onclick = () => {
+    if (!dragonsLoaded || !currentDragonLoaded) {
+      document.getElementById("dragonStatus").textContent =
+        "ドラゴンデータを読み込み中です。少し待ってからもう一度お試しください。";
+      document.getElementById("dragonOverlay").classList.remove("hidden");
+      return;
+    }
+    if (Object.keys(dragons).length === 0) {
+      void showConfirmation("何かの卵があります。育てますか？").then(confirmed => {
+        if (!confirmed) return;
+        initialDragonSetup = true;
+        document.getElementById("newDragonName").value = "";
+        document.getElementById("dragonStatus").textContent = "";
+        document.getElementById("dragonOverlay").classList.remove("hidden");
+        renderDragonManager();
+        document.getElementById("newDragonName").focus();
+      });
+      return;
+    }
+    initialDragonSetup = false;
+    renderDragonManager();
+    document.getElementById("dragonOverlay").classList.remove("hidden");
+  };
+  document.getElementById("closeDragonBtn").onclick = () => {
+    initialDragonSetup = false;
+    document.getElementById("dragonOverlay").classList.add("hidden");
+    renderDragonManager();
+  };
+  document.getElementById("dragonOverlay").onkeydown = event => {
+    if (event.key === "Escape") {
+      initialDragonSetup = false;
+      document.getElementById("dragonOverlay").classList.add("hidden");
+      renderDragonManager();
+    }
+  };
+  document.getElementById("saveDragonNameBtn").onclick = async () => {
+    const dragon = dragons[currentDragonId];
+    const nameInput = document.getElementById("dragonNameInput");
+    const name = nameInput.value.trim();
+    if (!dragon || !name || name.length > 10) {
+      document.getElementById("dragonStatus").textContent =
+        "ドラゴンの名前を1〜10文字で入力してください。";
+      return;
+    }
+    dragon.name = name;
+    document.getElementById("dragonStatus").textContent = "";
+    await persistDragon(currentDragonId, dragon);
+    renderDragonManager();
+  };
+  document.getElementById("dragonMemoriesBtn").onclick = () => {
+    document.getElementById("dragonMemories").classList.toggle("hidden");
+  };
+  document.getElementById("newDragonForm").onsubmit = async event => {
+    event.preventDefault();
+    const name = document.getElementById("newDragonName").value.trim();
+    if (!name || name.length > 10) {
+      document.getElementById("dragonStatus").textContent =
+        "新しい卵の名前を1〜10文字で入力してください。";
+      return;
+    }
+    const isInitialDragon = initialDragonSetup && Object.keys(dragons).length === 0;
+    if (!isInitialDragon && !Object.values(dragons).some(dragon => dragon.stage === "elder")) return;
+    const id = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const dragon = createDragon(name);
+    try {
+      await update(ref(database), {
+        [`dragons/${id}`]: dragon,
+        currentDragon: id
+      });
+      dragons[id] = dragon;
+      currentDragonId = id;
+      initialDragonSetup = false;
+      document.getElementById("newDragonName").value = "たまご";
+      document.getElementById("dragonStatus").textContent = "";
+      renderDragonManager();
+    } catch (error) {
+      console.error("新しい卵の追加に失敗しました。", error);
+      document.getElementById("dragonStatus").textContent =
+        `新しい卵を追加できませんでした: ${error.message}`;
+      setSyncStatus(`新しい卵の追加に失敗しました: ${error.message}`, true);
+    }
   };
   document.getElementById("addTaskBtn").onclick = () => {
     addTaskToCurrentDate();
@@ -973,6 +1586,39 @@ function init() {
     error => {
       console.error("Firebaseからデータを読み込めませんでした。", error);
       setSyncStatus(`Firebaseから読み込めませんでした: ${error.message}`, true);
+    }
+  );
+  onValue(
+    ref(database, "dragons"),
+    snapshot => {
+      const value = snapshot.val();
+      dragons = value && typeof value === "object"
+        ? Object.fromEntries(
+          Object.entries(value).map(([id, dragon]) => [id, normalizeDragon(dragon)])
+        )
+        : {};
+      dragonsLoaded = true;
+      initializeDragonData();
+      renderDragonManager();
+    },
+    error => {
+      console.error("ドラゴン一覧を読み込めませんでした。", error);
+      document.getElementById("dragonStatus").textContent =
+        `ドラゴンを読み込めませんでした: ${error.message}`;
+    }
+  );
+  onValue(
+    ref(database, "currentDragon"),
+    snapshot => {
+      currentDragonId = typeof snapshot.val() === "string" ? snapshot.val() : null;
+      currentDragonLoaded = true;
+      initializeDragonData();
+      renderDragonManager();
+    },
+    error => {
+      console.error("育成中のドラゴンを読み込めませんでした。", error);
+      document.getElementById("dragonStatus").textContent =
+        `育成中のドラゴンを読み込めませんでした: ${error.message}`;
     }
   );
 }
