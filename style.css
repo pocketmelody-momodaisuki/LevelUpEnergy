@@ -45,6 +45,10 @@ body {
   font-size: 12px;
 }
 
+.app-version {
+  font-size: 12px;
+}
+
 .sync-error {
   color: #b42318;
 }
