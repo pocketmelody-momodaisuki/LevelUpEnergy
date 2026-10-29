@@ -764,6 +764,9 @@ function awardDragonRewardsForCompletion(date, task) {
   dailyXpAwarded[date] = totalXp;
   const earnedXp = Math.max(0, totalXp - previousXp);
   if (earnedXp > 0) addDragonXp(dragon, earnedXp);
+  if (getTaskDurationSeconds(task, "actualMinutes") !== null) {
+    addDragonXp(dragon, 5);
+  }
 
   const dayTasks = data.days[date] || [];
   const dailyBonusDates = dragon.logs.dailyBonusDates || {};
